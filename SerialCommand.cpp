@@ -48,41 +48,67 @@ bool CmdThunderstorm::Initialize(int dataLength, char *commandData)
 
 void CmdThunderstorm::Start() {
   // Pick a starting point
-  unsigned long currentMillis = millis();
-  segmentCutoff = currentMillis + random(250, 500);
-  boltCutoff = currentMillis + random(1500, 3000); 
+  CreateStrike();
+}
 
+void CmdThunderstorm::CreateStrike() {
+  unsigned long currentMillis = millis();
+  segmentCutoff = currentMillis + random(200, 500);
+  boltCutoff = currentMillis + random(1000, 3000); 
+  isPausing = false;
   NewSegment();
 }
 
+void CmdThunderstorm::CreatePause() {
+  unsigned long currentMillis = millis();
+  boltCutoff = currentMillis + random(1500, 5000); 
+  isPausing = true;
+}
+
+
 bool CmdThunderstorm::Run() {
   unsigned long currentMillis = millis();
-  int intensityMultiplier = 255 - (random(0,4) * 32);
+  bool beforeBoltCutoff = currentMillis < boltCutoff;
+  bool beforeSegmentCutoff = currentMillis < segmentCutoff;
 
-  // Check to see if the bolt should quit
-  if (currentMillis < boltCutoff) {
+  if (isPausing) {
+    if (beforeBoltCutoff) {
+      //Do nothing - waiting for the next strike
+      return true;
+    } else {
+      CreateStrike();
+      return true; 
+    }    
+  } else {
+    int intensityMultiplier = 255 - (random(0,4) * 32);
 
-    // Check to see if the segment should quit
-    if (segmentCutoff < currentMillis) {
-      NewSegment();
-      segmentCutoff = currentMillis + random(250, 750);
-    }
-    else {    
-      for (int i = 0; i < (Width * 2) + 1; i++)
-      {
-        leds[(i + StartLED) % NUM_LEDS] = CRGB(intensityMultiplier, intensityMultiplier, intensityMultiplier);
-      }
+    // Check to see if the bolt should quit
+    if (beforeBoltCutoff) {
+
+      // Check to see if the segment should quit
+      if (!beforeSegmentCutoff) {
+        NewSegment();
+        segmentCutoff = currentMillis + random(250, 750);
+      } else {    
+        for (int i = 0; i < (Width * 2) + 1; i++)
+        {
+          leds[(i + StartLED) % NUM_LEDS] = CRGB(intensityMultiplier, intensityMultiplier, intensityMultiplier);
+        }
   
-      FastLED.show();
-    }
+        FastLED.show();
+      }
     
-    return true;
+      return true;
+    } else {
+      // Current Strike is done, pause until the next strike
+      fill_solid(leds, NUM_LEDS, CRGB::Black);
+      FastLED.show();
+
+      CreatePause();
+      
+      return true;
+    } 
   }
-  else {
-    fill_solid(leds, NUM_LEDS, CRGB::Black);
-    FastLED.show();
-    return false;
-  } 
 }
 
 void CmdThunderstorm::NewSegment() {
@@ -148,8 +174,6 @@ void CmdRainbow::Start()
 
 bool CmdRainbow::Run()
 {
-  InitialHue = InitialHue + 5;
-  
   fill_rainbow(leds, NUM_LEDS, InitialHue++, 10);
   FastLED.show();
 
@@ -183,85 +207,15 @@ bool CmdSolidColor::Run()
 
 
 CommandParser::CommandParser() {
-  CmdBuffer = new char[CMD_BUFFER_SIZE];
-  ResetBuffer();
-}
-
-/*
- *  char* CmdBuffer;
- *  byte BufferSize;
- *  byte CommandLength;
- *  
- */
-
-CommandBase* CommandParser::ProcessSerialData(int data) {
-  
-  DEBUG_MESSAGE("Processing data (Hex)");
-  DEBUG_MESSAGE_DEC(data)
-  DEBUG_MESSAGE_HEX(data)
-
-  if (data < 0)
-    return NULL;
-
-
-  char c = char(data);
-  
-  // Check to see if we encounter a terminator character.  If so, then 
-  // process any data in the buffer, and reset.
-  if (c == CMD_TERMINATOR_CHAR) {
-    DEBUG_MESSAGE("Processing Command - Length:");
-    DEBUG_MESSAGE_DEC(CommandLength);
-    
-    CommandBase* Result = NULL;
-
-    // If we have a command returned, 
-    if (CommandLength > 0) {
-      Result = ProcessCommand();
-    }
-
-    ResetBuffer();
-
-    // Return the command object if we have one.
-    return Result;
-  } else if (((c >= '0') && (c <= '9')) || ((c >= 'a') && (c <= 'f')) || ((c >= 'A') && (c <= 'F'))) {
-    // Check for the rare condition that the command buffer is overrun
-    if (CommandLength >= CMD_BUFFER_SIZE) {
-
-      DEBUG_MESSAGE("Buffer Overrun")
-      ResetBuffer();
-      
-    } else {
-      CmdBuffer[CommandLength++] = c;
-    }
-  } else {
-    // Not a hex character, so eat it.
-    DEBUG_MESSAGE("Eating Character (Hex):")
-    DEBUG_MESSAGE_HEX(c)
-  }
-
-  return NULL;
 }
 
 
-void CommandParser::ResetBuffer() {
-  
-    // Reset the command buffer
-    for (byte i = 0; i < CMD_BUFFER_SIZE; i++) {
-      CmdBuffer[i] = 0;
-    }
-
-    // Reset the command length to 0
-    CommandLength = 0;\
-
-    DEBUG_MESSAGE("Buffer Reset");
-}
-
-CommandBase* CommandParser::ProcessCommand() {
+CommandBase* CommandParser::ProcessCommand(char* command, byte commandLength) {
   DEBUG_MESSAGE("Command Length:");
-  DEBUG_MESSAGE_DEC(CommandLength);
+  DEBUG_MESSAGE_DEC(commandLength);
   
-  if (CommandLength > 0) {
-    byte commandType = CommandParser::GetNybbleVal(CmdBuffer[0]);
+  if (commandLength > 0) {
+    byte commandType = CommandParser::GetNybbleVal(command[0]);
 
     DEBUG_MESSAGE("Command Type");
     DEBUG_MESSAGE_HEX(commandType);
@@ -271,31 +225,31 @@ CommandBase* CommandParser::ProcessCommand() {
       case CMD_OFF:
       {
           CmdOff* OffResult = new CmdOff();
-          OffResult->Initialize(CommandLength, CmdBuffer);
+          OffResult->Initialize(commandLength, command);
           return OffResult;
       }
       case CMD_STORM:
       {
           CmdThunderstorm* StormResult = new CmdThunderstorm();
-          StormResult->Initialize(CommandLength, CmdBuffer);
+          StormResult->Initialize(commandLength, command);
           return StormResult;
       }
       case CMD_TWINKLE:
       {
           CmdTwinkle* TwinkleResult = new CmdTwinkle();
-          TwinkleResult->Initialize(CommandLength, CmdBuffer);
+          TwinkleResult->Initialize(commandLength, command);
           return TwinkleResult;
       }
       case CMD_SOLIDCOLOR:
       {
           CmdSolidColor* SolidColorResult = new CmdSolidColor();
-          SolidColorResult->Initialize(CommandLength, CmdBuffer);
+          SolidColorResult->Initialize(commandLength, command);
           return SolidColorResult;
       }      
       case CMD_RAINBOW:
       {
           CmdRainbow* RainbowResult = new CmdRainbow();
-          RainbowResult->Initialize(CommandLength, CmdBuffer);
+          RainbowResult->Initialize(commandLength, command);
           return RainbowResult;
       }
     }

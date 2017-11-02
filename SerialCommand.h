@@ -26,12 +26,14 @@ public:
   bool Initialize(int dataLength, char *commandData);
   void Start();
   bool Run();
-  
-  int Intensity;
+
+  bool isPausing;
   unsigned long segmentCutoff;
   unsigned long boltCutoff;
 
 private:
+  void CreateStrike();
+  void CreatePause();
   void NewSegment();
 
   byte CenterLED;
@@ -74,7 +76,7 @@ public:
   bool Run();
   
 protected:
-  int InitialHue;
+  byte InitialHue;
 };
 
 
@@ -82,17 +84,9 @@ class CommandParser
 {
 public:
   CommandParser();
-  CommandBase* ProcessSerialData(int data);
+  CommandBase* ProcessCommand(char* command, byte commandLength);
   static byte GetByteVal(char highNybble, char lowNybble);
   static byte GetNybbleVal(char charValue);
-
-  void ResetBuffer();
-
-private:
-  CommandBase* ProcessCommand();
-  
-  char* CmdBuffer;
-  byte CommandLength;
 };
 
 #endif

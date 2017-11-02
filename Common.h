@@ -2,7 +2,7 @@
 #define CloudCommon_h
 
 #define DEBUGGING_MODE
-//#define USE_USB_SERIAL_PORT
+//#define RX_USB_SERIAL_PORT
 
 #ifdef DEBUGGING_MODE
 
@@ -20,13 +20,19 @@
 
 
 // Library Includes
+#include <TimerOne.h>
+#include <util/atomic.h>
 #include <FastLED.h>
 #include <SoftwareSerial.h>
 #include "SerialCommand.h"
 
+
+// Set timer to 50Hz
+#define TIMER_PERIOD_MICRO_SECONDS 20000
+
+
 // Command Constants
-#define CMD_BUFFER_SIZE 128
-#define CMD_TERMINATOR_CHAR '@'
+#define CMD_BUFFER_SIZE 24
 
 #define CMD_OFF 0
 #define CMD_STORM 1

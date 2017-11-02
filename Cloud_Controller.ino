@@ -1,46 +1,48 @@
 #include "Common.h"
 
+// LED Array
 CRGBArray<NUM_LEDS> leds;
-CommandBase* currentCommand;
+
+// Currently Running Command
+volatile CommandBase* currentCommand;
+
+// Command Parser
 CommandParser* mainCommandParser;
 
-#ifndef USE_USB_SERIAL_PORT
-SoftwareSerial mySerial(10, 11); // RX, TX
+// Character buffer for commands
+char CommandBuffer[CMD_BUFFER_SIZE];
+
+
+// Initialize the software serial port
+#ifndef RX_USB_SERIAL_PORT
+
+  SoftwareSerial BlueToothSerial(10, 11); // RX, TX
+  
 #endif
 
 
-// Timer2 - 40Hz 
-
 void setup() {
 
-  // Set the timer for 30Hz
-  cli(); // stop interrupts
-  TCCR1A = 0; // set entire TCCR1A register to 0
-  TCCR1B = 0; // same for TCCR1B
-  TCNT1  = 0; // initialize counter value to 0
-  // set compare match register for 30.00120004800192 Hz increments
-  OCR1A = 8332; // = 16000000 / (64 * 30.00120004800192) - 1 (must be <65536)
-  // turn on CTC mode
-  TCCR1B |= (1 << WGM12);
-  // Set CS12, CS11 and CS10 bits for 64 prescaler
-  TCCR1B |= (0 << CS12) | (1 << CS11) | (1 << CS10);
-  // enable timer compare interrupt
-  TIMSK1 |= (1 << OCIE1A);
-  sei(); // allow interrupts
+  // Setup the serial communications
+  SerialSetup();
+  
+  // Set timer period
+  Timer1.initialize(TIMER_PERIOD_MICRO_SECONDS); 
+  Timer1.attachInterrupt(onTimerFire);
 
-
-  // Set up the comand processor
+  // Set up the command processor
   mainCommandParser = new CommandParser();
 
-  Serial.begin(9600);
 
-  // Initialzie
-  #ifndef USE_USB_SERIAL_PORT
-   mySerial.begin(9600);
-  #endif
+  // Clear the command buffer
+  ClearCommandBuffer();
   
-  FastLED.addLeds<WS2812,3,RGB>(leds, NUM_LEDS); 
 
+  // Initialize the LED library
+  FastLED.addLeds<WS2812,3,RGB>(leds, NUM_LEDS).setCorrection(LEDColorCorrection::Typical8mmPixel);
+
+
+  // Flash the lights so we know that the controller has been reset
   fill_solid(leds, NUM_LEDS, CRGB::Red);
   FastLED.show();
   delay(100);
@@ -57,58 +59,88 @@ void setup() {
   FastLED.show();
 }
 
+
+// Main application loop.  This basically checks for commands on the serial port and 
+// processes the commands as they are recieved
 void loop() {
 
   CommandBase* parsedCommand = NULL;
 
-  #ifndef USE_USB_SERIAL_PORT
+  byte commandLength = ReadCommandLine();
 
-  if (mySerial.available() > 0)
+  if (commandLength > 0)
   {
-    int dataRead = mySerial.read();
-
     DEBUG_MESSAGE("Data Read");
-    DEBUG_MESSAGE_DEC(dataRead);
+    DEBUG_MESSAGE(CommandBuffer);
     
-    if (dataRead >= 0) {
-      parsedCommand = mainCommandParser->ProcessSerialData(dataRead);
-    }  
- 
-  #else
-
-  if (Serial.available())
-  {
-    int dataRead = Serial.read();
-
-    if (dataRead >= 0) {
-      parsedCommand = mainCommandParser->ProcessSerialData(dataRead);
-    }
-    
-  #endif
+    parsedCommand = mainCommandParser->ProcessCommand(CommandBuffer, commandLength);
 
     if (parsedCommand) {
       DEBUG_MESSAGE("Command Parsed");
 
-      noInterrupts();
+      ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 
-      if (currentCommand) {
-        DEBUG_MESSAGE("Stopping Current Command");
-        currentCommand->Stop();
-        delete currentCommand;
-        currentCommand = NULL;
+        if (currentCommand) {
+          DEBUG_MESSAGE("Stopping Current Command");
+          currentCommand->Stop();
+          delete currentCommand;
+          currentCommand = NULL;
+        }
+
+        DEBUG_MESSAGE("Starting New Command");
+        currentCommand = parsedCommand;
+        currentCommand->Start();
       }
-
-      DEBUG_MESSAGE("Starting New Command");
-      currentCommand = parsedCommand;
-      currentCommand->Start();
-
-      interrupts();
     }
   }
+
+  ClearCommandBuffer();
 }
 
-ISR(TIMER1_COMPA_vect){
 
+void SerialSetup() {
+
+ #ifndef RX_USB_SERIAL_PORT
+
+  BlueToothSerial.begin(9600);
+
+  #ifdef DEBUGGING_MODE
+
+   Serial.begin(9600);
+
+  #endif
+
+ #else
+
+  Serial.begin(9600);
+  
+ #endif
+  
+}
+
+byte ReadCommandLine()
+{
+ #ifndef RX_USB_SERIAL_PORT
+   return BlueToothSerial.readBytesUntil('\n', CommandBuffer, CMD_BUFFER_SIZE);
+ #else
+   return Serial.readBytesUntil('\n', CommandBuffer, CMD_BUFFER_SIZE);
+ #endif
+}
+
+
+void ClearCommandBuffer() {
+  
+    // Reset the command buffer
+    for (byte i = 0; i < CMD_BUFFER_SIZE; i++) {
+      CommandBuffer[i] = 0x00;
+    }
+
+    DEBUG_MESSAGE("Buffer Reset");
+}
+
+
+
+void onTimerFire() {
    if (currentCommand)
    {
      if (!currentCommand->Run()) {
